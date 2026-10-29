@@ -413,9 +413,36 @@ function Assistant({ uid }: any) {
 }
 
 function Integrations({ integrations, uid, onReload, setError }: any) {
+  const [oauthMsg, setOauthMsg] = useState('')
+  // Step 5 Part 2: after a Meta/Google OAuth callback, the server only
+  // redirects back with ?oauth=..._connected (no token). The signed-in
+  // user then records ONLY a read-only test status in their own
+  // RLS-protected integrations row. No access token is stored here,
+  // and this status does NOT mean live reads or publishing are enabled.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const oauth = params.get('oauth')
+    if (!oauth) return
+    const expiresIn = params.get('expires_in')
+    window.history.replaceState({}, '', window.location.pathname)
+    if (oauth === 'meta_connected' || oauth === 'google_connected') {
+      const isMeta = oauth === 'meta_connected'
+      const provider = isMeta ? 'Meta Marketing API' : 'Google Ads API'
+      const scope = isMeta ? 'ads_read,business_management' : 'https://www.googleapis.com/auth/adwords'
+      supabase.from('integrations').upsert({
+        user_id: uid, provider, status: 'connected',
+        config: { readOnlyTest: true, scope, publishingEnabled: false, tokenStored: false, discardedTokenExpiresInSeconds: expiresIn ? Number(expiresIn) : null, connectedAt: new Date().toISOString() },
+      }, { onConflict: 'user_id,provider' }).then(({ error }) => {
+        if (error) setError(error.message)
+        else { setOauthMsg(`${provider} connected for a read-only test. No ads are published, and no access token was stored.`); onReload() }
+      })
+    } else if (oauth === 'meta_error' || oauth === 'google_error') {
+      setError('That Meta/Google connection did not complete. Check the Vercel environment variables and the exact redirect URI in the Meta/Google console, then try Connect again. No ads were published.')
+    }
+  }, [])
   const providers = [
-    ['Meta Marketing API', 'Needs a Meta developer app, Business Manager access, and ads permissions. OAuth + review are later steps.'],
-    ['Google Ads API', 'Needs a Google Ads developer token, OAuth consent, and API access approval. Publishing is a later step.'],
+    ['Meta Marketing API', 'Connect uses read-only scopes ads_read and business_management only. Publishing (ads_management) is NOT requested here and needs a separate approval step. App Review may still be required for other users.'],
+    ['Google Ads API', 'Connect uses the Google Ads read-only scope only. Publishing is NOT requested here and needs a separate approval step. A developer token and API approval are still required for live use.'],
     ['Google Analytics 4', 'Enter a Measurement ID in Tracking. Verification is a later step.'],
     ['Google Tag Manager', 'Enter a Container ID in Tracking. Verification is a later step.'],
     ['Meta Pixel & Conversions API', 'Enter a Pixel ID in Tracking. Server-side tokens must stay server-side only.'],
@@ -432,9 +459,12 @@ function Integrations({ integrations, uid, onReload, setError }: any) {
     await supabase.from('integrations').update({ status: 'disconnected' }).eq('provider', p).eq('user_id', uid); onReload()
   }
   return <>
-    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 text-sm text-amber-900"><strong>Nothing is published without your explicit authorization.</strong> Saving a card here only records “saved, not verified.” It does not connect an ad account, does not publish ads, and does not change live budgets.</div>
-    {providers.map(([p, note]) => <Card key={p} title={`${p} — ${statusOf(p) === 'connected' ? 'Connected' : statusOf(p) === 'saved_unverified' ? 'Saved, not verified' : statusOf(p) === 'disconnected' ? 'Disconnected' : 'Not connected'}`}>
+    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 text-sm text-amber-900"><strong>Nothing is published without your explicit authorization.</strong> Saving a card here only records “saved, not verified.” Connecting Meta or Google here only records a read-only test status — it does not publish ads, does not change live budgets, and no access token is stored in this step.</div>
+    {oauthMsg && <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4 text-sm text-green-900">{oauthMsg}</div>}
+    {providers.map(([p, note]) => <Card key={p} title={`${p} — ${statusOf(p) === 'connected' ? 'Connected (read-only test)' : statusOf(p) === 'saved_unverified' ? 'Saved, not verified' : statusOf(p) === 'disconnected' ? 'Disconnected' : 'Not connected'}`}>
       <p className="text-sm text-slate-600 mb-3">{note}</p>
+      {p === 'Meta Marketing API' && <a className={btnGhost + ' mr-2 inline-block'} href="/api/auth/meta">Connect with Meta (read-only test)</a>}
+      {p === 'Google Ads API' && <a className={btnGhost + ' mr-2 inline-block'} href="/api/auth/google">Connect with Google (read-only test)</a>}
       <button className={btnGhost + ' mr-2'} onClick={() => save(p)}>Save as not verified</button>
       <button className={btnGhost} onClick={() => disconnect(p)}>Disconnect</button>
     </Card>)}
