@@ -217,7 +217,13 @@ export default function App() {
 }
 
 // ---------- generator form ----------
-function GenForm({ kind, title, fields, onResult, callAI }: any) {
+function GenForm({ kind, title, fields, onResult, callAI }: {
+  kind: string
+  title: string
+  fields: string[]
+  onResult: (result: { campaignNames?: string[]; [key: string]: unknown }) => void
+  callAI: (kind: string, prompt: string, context?: string) => Promise<Record<string, unknown>>
+}) {
   const [form, set] = useForm(Object.fromEntries(fields.map((f: string) => [f, ''])))
   const [result, setResult] = useState<any>(null)
   async function run(e: React.FormEvent) {
@@ -413,9 +419,37 @@ function Assistant({ uid }: any) {
 }
 
 function Integrations({ integrations, uid, onReload, setError }: any) {
+  const [oauthMsg, setOauthMsg] = useState('')
+  // Full Meta OAuth (not the old read-only test): the server exchanges
+  // the code, encrypts the long-lived token, and stores it server-side
+  // only. The callback redirects back with only a flag — no token ever
+  // reaches the browser. Meta status is read from /api/meta/status.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const oauth = params.get('oauth')
+    if (!oauth) return
+    window.history.replaceState({}, '', window.location.pathname)
+    if (oauth === 'meta_connected') {
+      setOauthMsg('Meta account connected. Your token is stored encrypted on the server only. No campaign was created or launched by connecting.')
+      onReload()
+    } else if (oauth === 'meta_cancelled') {
+      setOauthMsg('Meta connection cancelled. Nothing was connected and no campaign was changed.')
+    } else if (oauth === 'meta_unlinked') {
+      setError('Meta connection could not be linked to your signed-in account. Please click Connect Meta Account in the dashboard while signed in, then try again.')
+    } else if (oauth === 'google_connected') {
+      supabase.from('integrations').upsert({
+        user_id: uid, provider: 'Google Ads API', status: 'connected',
+        config: { readOnlyTest: true, scope: 'https://www.googleapis.com/auth/adwords', publishingEnabled: false, tokenStored: false, connectedAt: new Date().toISOString() },
+      }, { onConflict: 'user_id,provider' }).then(({ error }) => {
+        if (error) setError(error.message)
+        else { setOauthMsg('Google connected for a read-only test. No ads are published, and no access token was stored.'); onReload() }
+      })
+    } else if (oauth === 'meta_error' || oauth === 'google_error') {
+      setError('That connection did not complete. Check the Vercel environment variables and the exact redirect URI in the Meta/Google console, then try Connect again. No ads were published.')
+    }
+  }, [])
   const providers = [
-    ['Meta Marketing API', 'Needs a Meta developer app, Business Manager access, and ads permissions. OAuth + review are later steps.'],
-    ['Google Ads API', 'Needs a Google Ads developer token, OAuth consent, and API access approval. Publishing is a later step.'],
+    ['Google Ads API', 'Connect uses the Google Ads read-only scope only. Publishing is NOT requested here and needs a separate approval step. A developer token and API approval are still required for live use.'],
     ['Google Analytics 4', 'Enter a Measurement ID in Tracking. Verification is a later step.'],
     ['Google Tag Manager', 'Enter a Container ID in Tracking. Verification is a later step.'],
     ['Meta Pixel & Conversions API', 'Enter a Pixel ID in Tracking. Server-side tokens must stay server-side only.'],
@@ -432,13 +466,185 @@ function Integrations({ integrations, uid, onReload, setError }: any) {
     await supabase.from('integrations').update({ status: 'disconnected' }).eq('provider', p).eq('user_id', uid); onReload()
   }
   return <>
-    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 text-sm text-amber-900"><strong>Nothing is published without your explicit authorization.</strong> Saving a card here only records “saved, not verified.” It does not connect an ad account, does not publish ads, and does not change live budgets.</div>
-    {providers.map(([p, note]) => <Card key={p} title={`${p} — ${statusOf(p) === 'connected' ? 'Connected' : statusOf(p) === 'saved_unverified' ? 'Saved, not verified' : statusOf(p) === 'disconnected' ? 'Disconnected' : 'Not connected'}`}>
+    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 text-sm text-amber-900"><strong>Nothing is published without your explicit authorization.</strong> Connecting Meta below does not create, launch, or change any campaign. Campaigns are created as PAUSED by default and only become ACTIVE if you explicitly confirm launch. Tokens are never shown in this browser.</div>
+    {oauthMsg && <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4 text-sm text-green-900">{oauthMsg}</div>}
+    <MetaConnect uid={uid} onReload={onReload} setError={setError} />
+    {providers.map(([p, note]) => <Card key={p} title={`${p} — ${statusOf(p) === 'connected' ? 'Connected (read-only test)' : statusOf(p) === 'saved_unverified' ? 'Saved, not verified' : statusOf(p) === 'disconnected' ? 'Disconnected' : 'Not connected'}`}>
       <p className="text-sm text-slate-600 mb-3">{note}</p>
+      {p === 'Google Ads API' && <a className={btnGhost + ' mr-2 inline-block'} href="/api/auth/google">Connect with Google (read-only test)</a>}
       <button className={btnGhost + ' mr-2'} onClick={() => save(p)}>Save as not verified</button>
       <button className={btnGhost} onClick={() => disconnect(p)}>Disconnect</button>
     </Card>)}
   </>
+}
+
+function MetaConnect({ uid, onReload, setError }: any) {
+  const [status, setStatus] = useState<any>(null)
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [selected, setSelected] = useState('')
+  const [campaigns, setCampaigns] = useState<any[]>([])
+  const [insights, setInsights] = useState<any[]>([])
+  const [loading, setLoading] = useState('')
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  const [datePreset, setDatePreset] = useState('last_30d')
+  const [createForm, setCreateForm] = useState({ name: '', objective: 'OUTCOME_LEADS', daily_budget: '' })
+  const [confirmLaunch, setConfirmLaunch] = useState(false)
+  const [confirmResume, setConfirmResume] = useState(false)
+  const [actionBusy, setActionBusy] = useState('')
+
+  async function authHeaders() {
+    const { data } = await supabase.auth.getSession()
+    const token = data.session?.access_token
+    if (!token) throw new Error('Please sign in first.')
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  }
+  async function loadStatus() {
+    setLoading('status'); setErr('')
+    try {
+      const headers = await authHeaders()
+      const r = await fetch('/api/meta/status', { headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not load Meta status.')
+      setStatus(j)
+      if (j.connected) await loadAccounts()
+    } catch (e: any) { setErr(e.message) } finally { setLoading('') }
+  }
+  async function loadAccounts() {
+    setLoading('accounts'); setErr('')
+    try {
+      const headers = await authHeaders()
+      const r = await fetch('/api/meta/ad-accounts', { headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not load ad accounts.')
+      setAccounts(j.accounts || [])
+      if ((j.accounts || []).length === 0) setMsg('No ad accounts found for this Meta account.')
+      else if (!selected) setSelected(j.accounts[0].id)
+    } catch (e: any) { setErr(e.message) } finally { setLoading('') }
+  }
+  async function loadCampaigns() {
+    if (!selected) { setErr('Select an ad account first.'); return }
+    setLoading('campaigns'); setErr('')
+    try {
+      const headers = await authHeaders()
+      const r = await fetch(`/api/meta/campaigns?ad_account_id=${encodeURIComponent(selected)}`, { headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not load campaigns.')
+      setCampaigns(j.campaigns || [])
+      if ((j.campaigns || []).length === 0) setMsg('No campaigns in this ad account yet.')
+    } catch (e: any) { setErr(e.message) } finally { setLoading('') }
+  }
+  async function loadInsights(campaignId = '') {
+    if (!selected) { setErr('Select an ad account first.'); return }
+    setLoading('insights'); setErr('')
+    try {
+      const headers = await authHeaders()
+      const url = `/api/meta/insights?ad_account_id=${encodeURIComponent(selected)}&date_preset=${datePreset}${campaignId ? `&campaign_id=${encodeURIComponent(campaignId)}` : ''}`
+      const r = await fetch(url, { headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not load insights.')
+      setInsights(j.insights || [])
+      if ((j.insights || []).length === 0) setMsg('No insights for this selection and date range.')
+    } catch (e: any) { setErr(e.message) } finally { setLoading('') }
+  }
+  async function connectMeta(e: React.MouseEvent) {
+    e.preventDefault(); setErr(''); setMsg('')
+    try {
+      const headers = await authHeaders()
+      const r = await fetch('/api/meta/oauth-init', { method: 'POST', headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not start Meta connection.')
+      // Plain link target, after a signed-in init step: /api/auth/meta/start
+      window.location.href = j.startUrl || '/api/auth/meta/start'
+    } catch (e: any) { setErr(e.message) }
+  }
+  async function disconnectMeta() {
+    setErr(''); setMsg('')
+    try {
+      const headers = await authHeaders()
+      const r = await fetch('/api/auth/meta/disconnect', { method: 'POST', headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not disconnect.')
+      setStatus(null); setAccounts([]); setCampaigns([]); setInsights([]); setSelected(''); setMsg('Meta account disconnected. The stored token was deleted.'); onReload()
+    } catch (e: any) { setErr(e.message) }
+  }
+  async function createCampaign(e: React.FormEvent) {
+    e.preventDefault(); setErr(''); setMsg(''); setActionBusy('create')
+    try {
+      if (!selected) throw new Error('Select an ad account first.')
+      if (!createForm.name.trim()) throw new Error('Campaign name is required.')
+      const headers = await authHeaders()
+      const body: any = { ad_account_id: selected, name: createForm.name.trim(), objective: createForm.objective }
+      if (createForm.daily_budget) body.daily_budget = Number(createForm.daily_budget)
+      // Explicit launch only: both the ACTIVE choice AND the checkbox are required.
+      if (confirmLaunch) { body.confirmLaunch = true; body.status = 'ACTIVE' } else { body.status = 'PAUSED' }
+      const r = await fetch('/api/meta/campaigns', { method: 'POST', headers, body: JSON.stringify(body) })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not create campaign.')
+      setMsg(j.note || `Campaign created (${j.status || 'PAUSED'}).`)
+      setCreateForm({ name: '', objective: 'OUTCOME_LEADS', daily_budget: '' }); setConfirmLaunch(false)
+      await loadCampaigns()
+    } catch (e: any) { setErr(e.message) } finally { setActionBusy('') }
+  }
+  async function campaignAction(campaign: any, action: 'pause' | 'resume' | 'update') {
+    setErr(''); setMsg(''); setActionBusy(`${action}-${campaign.id}`)
+    try {
+      if (action === 'resume' && !confirmResume) throw new Error('To resume, first tick the “I confirm I want to resume / activate” checkbox below.')
+      const headers = await authHeaders()
+      const body: any = { ad_account_id: selected, campaign_id: campaign.id, action }
+      if (action === 'resume') body.confirmResume = true
+      const r = await fetch('/api/meta/campaigns', { method: 'PATCH', headers, body: JSON.stringify(body) })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Campaign action failed.')
+      setMsg(`Campaign ${action}d.`)
+      await loadCampaigns()
+    } catch (e: any) { setErr(e.message) } finally { setActionBusy('') }
+  }
+
+  useEffect(() => { loadStatus() }, [])
+  const statusLabel = !status ? 'Not checked yet' : status.connected ? 'Connected' : status.needsReconnect ? 'Needs reconnect — token expired or revoked' : 'Not connected'
+  return <Card title={`Meta Marketing API — ${statusLabel}`}>
+    <p className="text-sm text-slate-600 mb-3">Create &amp; manage ads and measure ad performance, with your explicit action only. Connecting does not create or launch a campaign. Campaigns are created as PAUSED unless you explicitly confirm launch. Tokens are stored encrypted on the server only and are never shown here.</p>
+    {err && <p className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-3 mb-3 text-sm">{err}</p>}
+    {msg && <p className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-3 mb-3 text-sm">{msg}</p>}
+    {loading && <p className="text-sm text-slate-600 mb-3">Loading {loading}… please wait.</p>}
+    <div className="flex gap-2 flex-wrap mb-4">
+      <a className={btnCls + ' inline-block'} href="/api/auth/meta/start" onClick={connectMeta}>Connect Meta Account</a>
+      <button className={btnGhost} onClick={loadStatus}>Refresh status</button>
+      {status?.connected && <button className={btnGhost} onClick={loadAccounts}>Load ad accounts</button>}
+      {status?.connected && <button className={btnGhost} onClick={disconnectMeta}>Disconnect Meta</button>}
+    </div>
+    {status && <p className="text-sm text-slate-700 mb-3">Status: {statusLabel}{status.metaUserId ? ` • Meta user: ${status.metaUserId}` : ''}{status.tokenExpiresAt ? ` • Token expires: ${new Date(status.tokenExpiresAt).toLocaleDateString()}` : ''}{status.scopes ? ` • Scopes: ${status.scopes}` : ''}</p>}
+    {accounts.length > 0 && <div className="mb-4">
+      <Field label="Ad account"><select className={inputCls} value={selected} onChange={e => setSelected(e.target.value)}>{accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name} ({a.id}) — {a.account_status}</option>)}</select></Field>
+      <div className="flex gap-2 flex-wrap">
+        <button className={btnCls} onClick={loadCampaigns}>Load campaigns</button>
+        <button className={btnGhost} onClick={() => loadInsights()}>Load account insights</button>
+        <Field label="Date range"><select className={inputCls} value={datePreset} onChange={e => setDatePreset(e.target.value)}><option value="last_7d">Last 7 days</option><option value="last_30d">Last 30 days</option><option value="last_90d">Last 90 days</option></select></Field>
+      </div>
+    </div>}
+    {accounts.length === 0 && status?.connected && <Empty text="No ad accounts found yet. Click Load ad accounts, or check that this Meta user has access to a Business Manager ad account." />}
+    {campaigns.length > 0 && <div className="mb-4 overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className="text-left">Campaign</th><th>Objective</th><th>Status</th><th></th></tr></thead><tbody>
+      {campaigns.map((c: any) => <tr key={c.id} className="border-t"><td>{c.name}<div className="text-xs text-slate-500">{c.id}</div></td><td>{c.objective}</td><td>{c.effective_status || c.status}</td><td className="space-x-2">
+        <button className={btnGhost} disabled={actionBusy === `pause-${c.id}`} onClick={() => campaignAction(c, 'pause')}>Pause</button>
+        <button className={btnGhost} disabled={actionBusy === `resume-${c.id}`} onClick={() => campaignAction(c, 'resume')}>Resume</button>
+        <button className={btnGhost} onClick={() => loadInsights(c.id)}>Insights</button>
+      </td></tr>)}
+    </tbody></table></div>}
+    {campaigns.length === 0 && selected && <Empty text="No campaigns loaded yet. Click Load campaigns above." />}
+    <label className="flex items-center gap-2 text-sm mb-4"><input type="checkbox" checked={confirmResume} onChange={e => setConfirmResume(e.target.checked)} /> I confirm I want to resume / activate a campaign (required before Resume works).</label>
+    {selected && <form onSubmit={createCampaign} className="border rounded-lg p-3 mb-4">
+      <h3 className="font-bold mb-2">Create a campaign — PAUSED by default</h3>
+      <Field label="Campaign name"><input className={inputCls} value={createForm.name} onChange={e => setCreateForm({ ...createForm, name: e.target.value })} required /></Field>
+      <Field label="Objective"><select className={inputCls} value={createForm.objective} onChange={e => setCreateForm({ ...createForm, objective: e.target.value })}><option value="OUTCOME_LEADS">Leads</option><option value="OUTCOME_SALES">Sales</option><option value="OUTCOME_TRAFFIC">Traffic</option><option value="OUTCOME_AWARENESS">Awareness</option><option value="OUTCOME_ENGAGEMENT">Engagement</option><option value="OUTCOME_APP_PROMOTION">App promotion</option></select></Field>
+      <Field label="Daily budget (optional, in account currency minor units as Meta expects)"><input className={inputCls} value={createForm.daily_budget} onChange={e => setCreateForm({ ...createForm, daily_budget: e.target.value })} placeholder="e.g. 1000" /></Field>
+      <label className="flex items-center gap-2 text-sm mb-3"><input type="checkbox" checked={confirmLaunch} onChange={e => setConfirmLaunch(e.target.checked)} /> I confirm I want to launch this campaign as ACTIVE right now. If unticked, it is created as PAUSED and will not spend.</label>
+      <button className={btnCls} disabled={!!actionBusy}>{actionBusy === 'create' ? 'Creating…' : 'Create campaign'}</button>
+    </form>}
+    {insights.length > 0 && <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className="text-left">Impressions</th><th>Clicks</th><th>Spend</th><th>Reach</th><th>CTR</th><th>CPC</th><th>CPM</th></tr></thead><tbody>
+      {insights.map((row: any, i: number) => <tr key={i} className="border-t"><td>{row.impressions ?? '—'}</td><td>{row.clicks ?? '—'}</td><td>{row.spend ?? '—'}</td><td>{row.reach ?? '—'}</td><td>{row.ctr ?? '—'}</td><td>{row.cpc ?? '—'}</td><td>{row.cpm ?? '—'}</td></tr>)}
+    </tbody></table></div>}
+  </Card>
 }
 
 function Plans({ profile, uid, onReload, setError }: any) {
