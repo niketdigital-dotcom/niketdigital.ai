@@ -111,7 +111,12 @@ create policy "metric_rows owner only" on public.metric_rows
 -- ---------- integrations: IDs / status ONLY, never secrets ----------
 -- Do NOT store API keys, access tokens, or passwords in this table.
 -- Status is only 'not_configured' or 'saved_unverified' until a real
--- verified OAuth connection exists (a later step, not this build).
+-- verified OAuth connection exists.
+-- Step 5 Part 2 note: status 'connected' in this step means ONLY
+-- "Connected (read-only test)". The OAuth callbacks exchange a code
+-- server-side and DISCARD the access token — config must never contain
+-- access_token or refresh_token. Live reads need a separate vault /
+-- encrypted-column step first; publishing needs a separate approval step.
 create table if not exists public.integrations (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
