@@ -47,6 +47,51 @@ AI Assistant, Integrations, Plans & Pricing, Settings, Help Center.
    Real image generation needs an image-provider key set server-side later.
    No fake image is ever shown.
 
+## Step 5 Part 2 — Meta / Google OAuth (read-only test only)
+
+This step adds Connect buttons on the Integrations page. Connecting does
+**not** publish ads, does not change live budgets, and does not turn on
+live ad-account reads.
+
+**In plain words, what happens when you click Connect:**
+1. The app sends you to Meta or Google to sign in there. You never give
+   AdGenius AI your Facebook or Google password.
+2. Meta or Google sends a one-time code back to the app's server.
+3. The server swaps that code for a token, checks it worked, then
+   **throws the token away**. It is not saved, not shown in the browser,
+   and not logged.
+4. The app then shows “Connected (read-only test)” — that is only a
+   status label. It is not a live ad-account connection yet.
+
+**What you must add in the Meta console:**
+- Redirect URI, copied exactly:
+  `https://niketdigitalai.vercel.app/api/auth/meta/callback`
+- The app requests only `ads_read` and `business_management`.
+  Publishing (`ads_management`) is not requested here.
+
+**What you must add in the Google console:**
+- Redirect URI, copied exactly:
+  `https://niketdigitalai.vercel.app/api/auth/google/callback`
+- The app requests only the Google Ads read-only scope:
+  `https://www.googleapis.com/auth/adwords`
+
+**What you must add in Vercel Environment Variables ONLY**
+(never in GitHub, never in frontend code, never in chat):
+- `META_APP_ID`
+- `META_APP_SECRET`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+
+Then redeploy in Vercel, go to Integrations, and click Connect.
+
+**Still not done after this step:**
+- Meta App Review and Business Verification for other users.
+- Google Ads developer token approval.
+- A vault / encrypted place to store tokens — required before any
+  live ad-account read is turned on.
+- Publishing ads — that needs a separate, explicitly approved step
+  with write scopes, and it is not enabled by connecting here.
+
 ## Your existing saved items
 
 See `MIGRATION.md`. Your Muse app profile ("Niket digital") and its 3 saved

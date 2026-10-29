@@ -1,0 +1,4 @@
+AdGenius AI - Step 5 Part 2 update files.
+Upload these files to the SAME places in your GitHub repository, keeping the folder names exactly as shown.
+No real secrets are in this zip - only placeholders like YOUR_META_APP_ID_HERE.
+Do not upload anything yet until you confirm Step 1.
