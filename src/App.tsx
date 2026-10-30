@@ -634,12 +634,28 @@ function MetaConnect({ uid, onReload, setError }: any) {
     if (!token) throw new Error('Please sign in first.')
     return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
   }
+  // Root-cause fix for "Unexpected token 'T', ... is not valid JSON":
+  // The old code called r.json() on every response, even when Vercel
+  // returned a non-JSON 404 / error page (for example, when
+  // /api/meta/oauth-init is not deployed). JSON.parse then threw a
+  // cryptic SyntaxError that hid the real HTTP status. This helper
+  // reads the body as text first, parses it only if it is JSON, and
+  // otherwise reports the real status and that the route may not be
+  // deployed — it does not hide the error, and it never includes a
+  // token or secret in the message.
+  async function readJsonSafe(r: Response): Promise<any> {
+    const text = await r.text()
+    if (!text) return {}
+    try { return JSON.parse(text) } catch {
+      throw new Error(`Meta server did not return JSON (HTTP ${r.status}). ${text.slice(0, 120)} — This usually means that API route is not deployed on Vercel yet. Check that the file is in GitHub in the correct folder, redeploy on Vercel, then try again.`)
+    }
+  }
   async function loadStatus() {
     setLoading('status'); setErr('')
     try {
       const headers = await authHeaders()
       const r = await fetch('/api/meta/status', { headers })
-      const j = await r.json()
+      const j = await readJsonSafe(r)
       if (!r.ok) throw new Error(j.error || 'Could not load Meta status.')
       setStatus(j)
       if (j.connected) await loadAccounts()
@@ -650,7 +666,7 @@ function MetaConnect({ uid, onReload, setError }: any) {
     try {
       const headers = await authHeaders()
       const r = await fetch('/api/meta/ad-accounts', { headers })
-      const j = await r.json()
+      const j = await readJsonSafe(r)
       if (!r.ok) throw new Error(j.error || 'Could not load ad accounts.')
       setAccounts(j.accounts || [])
       if ((j.accounts || []).length === 0) setMsg('No ad accounts found for this Meta account.')
@@ -663,7 +679,7 @@ function MetaConnect({ uid, onReload, setError }: any) {
     try {
       const headers = await authHeaders()
       const r = await fetch(`/api/meta/campaigns?ad_account_id=${encodeURIComponent(selected)}`, { headers })
-      const j = await r.json()
+      const j = await readJsonSafe(r)
       if (!r.ok) throw new Error(j.error || 'Could not load campaigns.')
       setCampaigns(j.campaigns || [])
       if ((j.campaigns || []).length === 0) setMsg('No campaigns in this ad account yet.')
@@ -676,7 +692,7 @@ function MetaConnect({ uid, onReload, setError }: any) {
       const headers = await authHeaders()
       const url = `/api/meta/insights?ad_account_id=${encodeURIComponent(selected)}&date_preset=${datePreset}${campaignId ? `&campaign_id=${encodeURIComponent(campaignId)}` : ''}`
       const r = await fetch(url, { headers })
-      const j = await r.json()
+      const j = await readJsonSafe(r)
       if (!r.ok) throw new Error(j.error || 'Could not load insights.')
       setInsights(j.insights || [])
       if ((j.insights || []).length === 0) setMsg('No insights for this selection and date range.')
@@ -687,7 +703,7 @@ function MetaConnect({ uid, onReload, setError }: any) {
     try {
       const headers = await authHeaders()
       const r = await fetch('/api/meta/oauth-init', { method: 'POST', headers })
-      const j = await r.json()
+      const j = await readJsonSafe(r)
       if (!r.ok) throw new Error(j.error || 'Could not start Meta connection.')
       // Plain link target, after a signed-in init step: /api/auth/meta/start
       window.location.href = j.startUrl || '/api/auth/meta/start'
@@ -698,7 +714,7 @@ function MetaConnect({ uid, onReload, setError }: any) {
     try {
       const headers = await authHeaders()
       const r = await fetch('/api/auth/meta/disconnect', { method: 'POST', headers })
-      const j = await r.json()
+      const j = await readJsonSafe(r)
       if (!r.ok) throw new Error(j.error || 'Could not disconnect.')
       setStatus(null); setAccounts([]); setCampaigns([]); setInsights([]); setSelected(''); setMsg('Meta account disconnected. The stored token was deleted.'); onReload()
     } catch (e: any) { setErr(e.message) }
@@ -714,7 +730,7 @@ function MetaConnect({ uid, onReload, setError }: any) {
       // Explicit launch only: both the ACTIVE choice AND the checkbox are required.
       if (confirmLaunch) { body.confirmLaunch = true; body.status = 'ACTIVE' } else { body.status = 'PAUSED' }
       const r = await fetch('/api/meta/campaigns', { method: 'POST', headers, body: JSON.stringify(body) })
-      const j = await r.json()
+      const j = await readJsonSafe(r)
       if (!r.ok) throw new Error(j.error || 'Could not create campaign.')
       setMsg(j.note || `Campaign created (${j.status || 'PAUSED'}).`)
       setCreateForm({ name: '', objective: 'OUTCOME_LEADS', daily_budget: '' }); setConfirmLaunch(false)
@@ -729,7 +745,7 @@ function MetaConnect({ uid, onReload, setError }: any) {
       const body: any = { ad_account_id: selected, campaign_id: campaign.id, action }
       if (action === 'resume') body.confirmResume = true
       const r = await fetch('/api/meta/campaigns', { method: 'PATCH', headers, body: JSON.stringify(body) })
-      const j = await r.json()
+      const j = await readJsonSafe(r)
       if (!r.ok) throw new Error(j.error || 'Campaign action failed.')
       setMsg(`Campaign ${action}d.`)
       await loadCampaigns()
