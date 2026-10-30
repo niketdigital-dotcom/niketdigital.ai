@@ -216,32 +216,154 @@ export default function App() {
   )
 }
 
+// ---------- professional result rendering (no raw JSON) ----------
+// Renders only data returned by the existing /api/ai-generate backend.
+// No mock data, no hardcoded campaign results: every value below comes
+// from the `result` argument, and missing fields are simply skipped.
+function formatLabel(key: string): string {
+  const map: Record<string, string> = {
+    campaignNames: 'Campaign Names', primaryTexts: 'Primary Texts',
+    callToActions: 'Call To Actions', callToAction: 'Call To Action',
+    adSets: 'Ad Sets', creativeConcepts: 'Creative Concepts',
+    testingIdeas: 'Testing Ideas', trackingChecklist: 'Tracking Checklist',
+    heroHeadline: 'Hero Headline', heroSubheadline: 'Hero Subheadline',
+    campaignStructure: 'Campaign Structure', negativeKeywords: 'Negative Keywords',
+    biddingSuggestion: 'Bidding Suggestion', budgetNote: 'Budget Note',
+    executiveSummary: 'Executive Summary', nextMonthPlan: 'Next Month Plan',
+    complianceFlags: 'Compliance Flags', displayConcepts: 'Display Concepts',
+    videoScript: 'Video Script',
+  }
+  if (map[key]) return map[key]
+  return key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+const COPYABLE_KEYS = new Set(['headlines', 'headline', 'primaryTexts', 'primaryText', 'descriptions', 'description'])
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  async function copy() {
+    try { await navigator.clipboard.writeText(text) } catch {
+      const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove()
+    }
+    setCopied(true); setTimeout(() => setCopied(false), 2000)
+  }
+  return <button type="button" className={btnGhost + ' !py-1 !px-2 text-xs shrink-0'} onClick={copy}>{copied ? 'Copied!' : 'Copy'}</button>
+}
+function CopyText({ text }: { text: string }) {
+  return <div className="flex items-start justify-between gap-2"><p className="text-sm text-slate-700 flex-1 whitespace-pre-wrap">{text}</p><CopyButton text={text} /></div>
+}
+function ObjectCard({ obj }: { obj: Row }) {
+  const title = obj.name || obj.title || obj.angle || obj.headline || null
+  const rest = Object.entries(obj).filter(([k, v]) => v !== title && k !== 'name' && k !== 'title')
+  return <div className="bg-white border border-slate-200 rounded-xl p-4">
+    {title && <h5 className="font-bold text-[#0b1e3a] mb-2">{String(title)}</h5>}
+    <div className="space-y-3">{rest.map(([k, v]) => <ResultValue key={k} name={k} value={v} />)}</div>
+  </div>
+}
+function ResultValue({ name, value }: { name: string; value: unknown }) {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    const text = String(value)
+    if (COPYABLE_KEYS.has(name)) return <CopyText text={text} />
+    return <p className="text-sm text-slate-700 whitespace-pre-wrap">{text}</p>
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <p className="text-sm text-slate-500">None.</p>
+    if (value.every(v => typeof v === 'string' || typeof v === 'number')) {
+      if (COPYABLE_KEYS.has(name)) {
+        return <div className="grid gap-2 sm:grid-cols-2">{value.map((v, i) => <div key={i} className="bg-white border border-slate-200 rounded-xl p-3"><CopyText text={String(v)} /></div>)}</div>
+      }
+      return <ul className="list-disc ml-5 space-y-1 text-sm text-slate-700">{value.map((v, i) => <li key={i}>{String(v)}</li>)}</ul>
+    }
+    return <div className="grid gap-3 md:grid-cols-2">{value.map((v, i) => typeof v === 'object' && v !== null ? <ObjectCard key={i} obj={v as Row} /> : <div key={i} className="bg-white border border-slate-200 rounded-xl p-3 text-sm text-slate-700">{String(v)}</div>)}</div>
+  }
+  if (typeof value === 'object') {
+    const obj = value as Row
+    if (obj.name || obj.title || obj.angle) return <ObjectCard obj={obj} />
+    return <div className="space-y-3">{Object.entries(obj).map(([k, v]) => <ResultValue key={k} name={k} value={v} />)}</div>
+  }
+  return null
+}
+function ResultField({ name, value }: { name: string; value: unknown }) {
+  if (value === null || value === undefined || value === '') return null
+  return <div className="mb-4"><h4 className="font-semibold text-[#0b1e3a] mb-1">{formatLabel(name)}</h4><ResultValue name={name} value={value} /></div>
+}
+function ResultView({ result, kind }: { result: any; kind: string }) {
+  if (!result) return null
+  if (typeof result === 'string') return <div className="mt-4"><CopyText text={result} /></div>
+  if (typeof result.raw === 'string' && Object.keys(result).length === 1) {
+    return <div className="mt-4"><p className="text-sm text-slate-600 mb-2">The AI returned plain text instead of a structured plan:</p><CopyText text={result.raw} /></div>
+  }
+  const handled = new Set<string>()
+  const rest = () => Object.entries(result).filter(([k]) => !handled.has(k)).map(([k, v]) => <ResultField key={k} name={k} value={v} />)
+  if (kind === 'meta_campaign') {
+    handled.add('campaignNames'); handled.add('objective'); handled.add('adSets'); handled.add('headlines'); handled.add('primaryTexts'); handled.add('callToActions')
+    return <div className="mt-4 space-y-5">
+      {Array.isArray(result.campaignNames) && result.campaignNames.length > 0 && <section><h3 className="font-bold text-[#0b1e3a] mb-2">Campaign Names</h3><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{result.campaignNames.map((n: string, i: number) => <div key={i} className="bg-[#0b1e3a] text-white rounded-xl p-4"><p className="text-xs text-blue-200 mb-1">Campaign {i + 1}</p><p className="font-semibold">{n}</p></div>)}</div></section>}
+      {result.objective && <section className="bg-blue-50 border border-blue-200 rounded-xl p-4"><h3 className="font-bold text-[#0b1e3a]">Campaign Objective</h3><p className="text-sm text-slate-700 mt-1">{String(result.objective)}</p></section>}
+      {Array.isArray(result.adSets) && result.adSets.length > 0 && <section><h3 className="font-bold text-[#0b1e3a] mb-2">Ad Sets</h3><div className="grid gap-3 md:grid-cols-2">{result.adSets.map((s: Row, i: number) => <ObjectCard key={i} obj={s} />)}</div></section>}
+      {Array.isArray(result.headlines) && result.headlines.length > 0 && <section><h3 className="font-bold text-[#0b1e3a] mb-2">Headlines</h3><div className="grid gap-2 sm:grid-cols-2">{result.headlines.map((h: string, i: number) => <div key={i} className="bg-white border border-slate-200 rounded-xl p-3"><CopyText text={h} /></div>)}</div></section>}
+      {Array.isArray(result.primaryTexts) && result.primaryTexts.length > 0 && <section><h3 className="font-bold text-[#0b1e3a] mb-2">Primary Texts</h3><div className="grid gap-3 md:grid-cols-2">{result.primaryTexts.map((t: string, i: number) => <div key={i} className="bg-white border border-slate-200 rounded-xl p-4"><CopyText text={t} /></div>)}</div></section>}
+      {Array.isArray(result.callToActions) && result.callToActions.length > 0 && <section><h3 className="font-bold text-[#0b1e3a] mb-2">Call To Actions</h3><div className="flex flex-wrap gap-2">{result.callToActions.map((c: string, i: number) => <span key={i} className="bg-[#2563eb] text-white text-sm font-semibold px-3 py-1.5 rounded-full">{c}</span>)}</div></section>}
+      {rest()}
+    </div>
+  }
+  if (Array.isArray(result.variations)) {
+    handled.add('variations'); handled.add('complianceFlags')
+    return <div className="mt-4 space-y-4">
+      {result.variations.map((v: Row, i: number) => <div key={i} className="bg-white border border-slate-200 rounded-2xl p-4">
+        <h3 className="font-bold text-[#0b1e3a] mb-3">Variation {i + 1}{v.angle ? ` — ${v.angle}` : ''}</h3>
+        {v.primaryText && <div className="mb-3"><h4 className="font-semibold text-[#0b1e3a] mb-1">Primary Text</h4><CopyText text={String(v.primaryText)} /></div>}
+        {v.headline && <div className="mb-3"><h4 className="font-semibold text-[#0b1e3a] mb-1">Headline</h4><CopyText text={String(v.headline)} /></div>}
+        {v.description && <div className="mb-3"><h4 className="font-semibold text-[#0b1e3a] mb-1">Description</h4><CopyText text={String(v.description)} /></div>}
+        {v.callToAction && <span className="bg-[#2563eb] text-white text-sm font-semibold px-3 py-1.5 rounded-full">{String(v.callToAction)}</span>}
+      </div>)}
+      {Array.isArray(result.complianceFlags) && result.complianceFlags.length > 0 && <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900"><strong>Compliance flags — review before use:</strong><ul className="list-disc ml-5 mt-1">{result.complianceFlags.map((f: string, i: number) => <li key={i}>{f}</li>)}</ul></div>}
+      {rest()}
+    </div>
+  }
+  return <div className="mt-4">{Object.entries(result).map(([k, v]) => <ResultField key={k} name={k} value={v} />)}</div>
+}
+
 // ---------- generator form ----------
-function GenForm({ kind, title, fields, onResult, callAI }: any) {
+function GenForm({ kind, title, fields, onResult, callAI }: {
+  kind: string
+  title: string
+  fields: string[]
+  onResult: (result: { campaignNames?: string[]; [key: string]: unknown }) => void
+  callAI: (kind: string, prompt: string, context?: string) => Promise<Record<string, unknown>>
+}) {
   const [form, set] = useForm(Object.fromEntries(fields.map((f: string) => [f, ''])))
   const [result, setResult] = useState<any>(null)
+  const [formError, setFormError] = useState('')
   async function run(e: React.FormEvent) {
-    e.preventDefault()
-    const prompt = fields.map((f: string) => `${f}: ${form[f]}`).join('\n')
-    const r = await callAI(kind, prompt)
-    setResult(r)
+    e.preventDefault(); setFormError('')
+    try {
+      const prompt = fields.map((f: string) => `${f}: ${form[f]}`).join('\n')
+      const r = await callAI(kind, prompt)
+      if (!r) throw new Error('AI generation did not return a result.')
+      setResult(r)
+    } catch (err: any) { setFormError(err?.message || 'AI generation failed. Please try again.'); setResult(null) }
   }
   return <Card title={title}>
     <form onSubmit={run}>
       {fields.map((f: string) => <Field key={f} label={f}><input className={inputCls} value={form[f]} onChange={set(f)} required /></Field>)}
       <button className={btnCls}>Generate</button>
     </form>
-    {result && <div className="mt-4"><pre className="bg-slate-50 border rounded-lg p-3 text-xs overflow-auto whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre><button className={btnCls + ' mt-3'} onClick={() => onResult(result)}>Save this result</button></div>}
+    {formError && <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-3 mt-4 text-sm">Generation failed: {formError} Nothing was saved.</div>}
+    {result && <div className="mt-4"><ResultView result={result} kind={kind} /><button className={btnCls + ' mt-4'} onClick={() => onResult(result)}>Save this result</button></div>}
   </Card>
 }
 
 function GoogleForm({ callAI, onSave }: any) {
   const [form, set] = useForm({ Business: '', Website: '', Keywords: '', Budget: '', Objective: '' })
   const [result, setResult] = useState<any>(null)
+  const [formError, setFormError] = useState('')
   async function run(e: React.FormEvent) {
-    e.preventDefault()
-    const r = await callAI('google_campaign', `Business: ${form.Business}\nWebsite: ${form.Website}\nKeywords: ${form.Keywords}\nBudget: ${form.Budget}\nObjective: ${form.Objective}`)
-    setResult(r)
+    e.preventDefault(); setFormError('')
+    try {
+      const r = await callAI('google_campaign', `Business: ${form.Business}\nWebsite: ${form.Website}\nKeywords: ${form.Keywords}\nBudget: ${form.Budget}\nObjective: ${form.Objective}`)
+      if (!r) throw new Error('AI generation did not return a result.')
+      setResult(r)
+    } catch (err: any) { setFormError(err?.message || 'AI generation failed. Please try again.'); setResult(null) }
   }
   const badHeadlines = (result?.headlines || []).filter((h: string) => h.length > 30)
   const badDesc = (result?.descriptions || []).filter((d: string) => d.length > 90)
@@ -250,12 +372,13 @@ function GoogleForm({ callAI, onSave }: any) {
       {Object.keys(form).map(k => <Field key={k} label={k}><input className={inputCls} value={(form as any)[k]} onChange={set(k as any)} required /></Field>)}
       <button className={btnCls}>Generate Google plan</button>
     </form>
+    {formError && <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-3 mt-4 text-sm">Generation failed: {formError} Nothing was saved.</div>}
     {result && <div className="mt-4">
       {badHeadlines.length > 0 && <p className="text-red-700 text-sm">⚠ {badHeadlines.length} headline(s) exceed 30 characters — edit them before use: {badHeadlines.join(' | ')}</p>}
       {badDesc.length > 0 && <p className="text-red-700 text-sm">⚠ {badDesc.length} description(s) exceed 90 characters.</p>}
       <p className="text-sm text-slate-600">Keyword ideas are ideas only — no search volume, CPC, or competition score is shown, because none is verified here.</p>
-      <pre className="bg-slate-50 border rounded-lg p-3 text-xs overflow-auto whitespace-pre-wrap mt-2">{JSON.stringify(result, null, 2)}</pre>
-      <button className={btnCls + ' mt-3'} onClick={() => onSave(result)}>Save this plan</button>
+      <ResultView result={result} kind="google_campaign" />
+      <button className={btnCls + ' mt-4'} onClick={() => onSave(result)}>Save this plan</button>
     </div>}
   </Card>
 }
@@ -263,10 +386,14 @@ function GoogleForm({ callAI, onSave }: any) {
 function CreativeStudio({ callAI, onSave }: any) {
   const [form, set] = useForm({ Product: '', Platform: '', Format: '1:1', Headline: '', Style: '' })
   const [result, setResult] = useState<any>(null)
+  const [formError, setFormError] = useState('')
   async function run(e: React.FormEvent) {
-    e.preventDefault()
-    const r = await callAI('meta_campaign', `Creative concept only. Product: ${form.Product}\nPlatform: ${form.Platform}\nFormat: ${form.Format}\nHeadline: ${form.Headline}\nStyle: ${form.Style}`)
-    setResult(r)
+    e.preventDefault(); setFormError('')
+    try {
+      const r = await callAI('meta_campaign', `Creative concept only. Product: ${form.Product}\nPlatform: ${form.Platform}\nFormat: ${form.Format}\nHeadline: ${form.Headline}\nStyle: ${form.Style}`)
+      if (!r) throw new Error('AI generation did not return a result.')
+      setResult(r)
+    } catch (err: any) { setFormError(err?.message || 'AI generation failed. Please try again.'); setResult(null) }
   }
   return <Card title="Creative Studio">
     <form onSubmit={run}>
@@ -274,7 +401,8 @@ function CreativeStudio({ callAI, onSave }: any) {
       <button className={btnCls}>Generate creative concept</button>
     </form>
     <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4 text-sm text-amber-900"><strong>Image generation: configuration-required.</strong> No image is shown here, and no fake image is displayed. Real image generation needs an image-provider key set server-side (a later step) — until then, use the concept text below with your own design tool.</div>
-    {result && <div className="mt-4"><pre className="bg-slate-50 border rounded-lg p-3 text-xs overflow-auto whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre><button className={btnCls + ' mt-3'} onClick={() => onSave(result)}>Save concept</button></div>}
+    {formError && <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-3 mt-4 text-sm">Generation failed: {formError} Nothing was saved.</div>}
+    {result && <div className="mt-4"><ResultView result={result} kind="meta_campaign" /><button className={btnCls + ' mt-4'} onClick={() => onSave(result)}>Save concept</button></div>}
   </Card>
 }
 
@@ -307,10 +435,14 @@ function Analyzer({ metrics, uid, onReload, setError, setNotice }: any) {
 function LandingPage({ callAI, onSave }: any) {
   const [form, set] = useForm({ Business: '', Product: '', Offer: '', Audience: '' })
   const [result, setResult] = useState<any>(null)
+  const [formError, setFormError] = useState('')
   async function run(e: React.FormEvent) {
-    e.preventDefault()
-    const r = await callAI('landing_page', `Business: ${form.Business}\nProduct: ${form.Product}\nOffer: ${form.Offer}\nAudience: ${form.Audience}`)
-    setResult(r)
+    e.preventDefault(); setFormError('')
+    try {
+      const r = await callAI('landing_page', `Business: ${form.Business}\nProduct: ${form.Product}\nOffer: ${form.Offer}\nAudience: ${form.Audience}`)
+      if (!r) throw new Error('AI generation did not return a result.')
+      setResult(r)
+    } catch (err: any) { setFormError(err?.message || 'AI generation failed. Please try again.'); setResult(null) }
   }
   function downloadHtml() {
     if (!result) return
@@ -323,9 +455,11 @@ function LandingPage({ callAI, onSave }: any) {
       {Object.keys(form).map(k => <Field key={k} label={k}><input className={inputCls} value={(form as any)[k]} onChange={set(k as any)} required /></Field>)}
       <button className={btnCls}>Generate landing page</button>
     </form>
+    {formError && <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-3 mt-4 text-sm">Generation failed: {formError} Nothing was saved.</div>}
     {result && <div className="mt-4 border rounded-2xl p-5 bg-slate-50">
       <h3 className="text-xl font-black">{result.heroHeadline}</h3><p className="text-slate-600">{result.heroSubheadline}</p>
       <ul className="list-disc ml-5 mt-2 text-sm">{(result.benefits || []).map((b: string, i: number) => <li key={i}>{b}</li>)}</ul>
+      <ResultView result={{ features: result.features, faqs: result.faqs, callToAction: result.callToAction }} kind="landing_page" />
       <button className={btnCls + ' mt-3 mr-2'} onClick={downloadHtml}>Download HTML</button>
       <button className={btnGhost} onClick={() => onSave(result)}>Save page</button>
     </div>}
@@ -352,16 +486,23 @@ function Tracking({ tracking, uid, onReload, setError }: any) {
 
 function Reports({ metrics, callAI, onSave }: any) {
   const [result, setResult] = useState<any>(null)
+  const [formError, setFormError] = useState('')
   async function run() {
-    if (metrics.length === 0) { setResult({ note: 'No metric rows yet. Add data in Campaign Analyzer first — this report will not invent results.' }); return }
-    const totals = metrics.reduce((a: any, m: Row) => ({ spend: a.spend + Number(m.spend || 0), clicks: a.clicks + Number(m.clicks || 0), leads: a.leads + Number(m.leads || 0), revenue: a.revenue + Number(m.revenue || 0) }), { spend: 0, clicks: 0, leads: 0, revenue: 0 })
-    const r = await callAI('report', 'Marketing report', JSON.stringify({ totals, campaigns: metrics.map((m: Row) => m.campaign_name) }))
-    setResult(r)
+    setFormError('')
+    try {
+      if (metrics.length === 0) { setResult({ note: 'No metric rows yet. Add data in Campaign Analyzer first — this report will not invent results.' }); return }
+      const totals = metrics.reduce((a: any, m: Row) => ({ spend: a.spend + Number(m.spend || 0), clicks: a.clicks + Number(m.clicks || 0), leads: a.leads + Number(m.leads || 0), revenue: a.revenue + Number(m.revenue || 0) }), { spend: 0, clicks: 0, leads: 0, revenue: 0 })
+      const r = await callAI('report', 'Marketing report', JSON.stringify({ totals, campaigns: metrics.map((m: Row) => m.campaign_name) }))
+      if (!r) throw new Error('AI generation did not return a result.')
+      setResult(r)
+    } catch (err: any) { setFormError(err?.message || 'AI generation failed. Please try again.'); setResult(null) }
   }
   return <Card title="Marketing report — from your saved data only">
     <button className={btnCls} onClick={run}>Generate report from my metric rows</button>
-    {result && <pre className="bg-slate-50 border rounded-lg p-3 text-xs overflow-auto whitespace-pre-wrap mt-4">{JSON.stringify(result, null, 2)}</pre>}
-    {result && !result.note && <button className={btnCls + ' mt-3'} onClick={() => onSave(result)}>Save report</button>}
+    {formError && <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-3 mt-4 text-sm">Generation failed: {formError} Nothing was saved.</div>}
+    {result && result.note && <p className="text-sm text-slate-600 mt-4">{result.note}</p>}
+    {result && !result.note && <ResultView result={result} kind="report" />}
+    {result && !result.note && <button className={btnCls + ' mt-4'} onClick={() => onSave(result)}>Save report</button>}
   </Card>
 }
 
@@ -414,34 +555,35 @@ function Assistant({ uid }: any) {
 
 function Integrations({ integrations, uid, onReload, setError }: any) {
   const [oauthMsg, setOauthMsg] = useState('')
-  // Step 5 Part 2: after a Meta/Google OAuth callback, the server only
-  // redirects back with ?oauth=..._connected (no token). The signed-in
-  // user then records ONLY a read-only test status in their own
-  // RLS-protected integrations row. No access token is stored here,
-  // and this status does NOT mean live reads or publishing are enabled.
+  // Full Meta OAuth (not the old read-only test): the server exchanges
+  // the code, encrypts the long-lived token, and stores it server-side
+  // only. The callback redirects back with only a flag — no token ever
+  // reaches the browser. Meta status is read from /api/meta/status.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const oauth = params.get('oauth')
     if (!oauth) return
-    const expiresIn = params.get('expires_in')
     window.history.replaceState({}, '', window.location.pathname)
-    if (oauth === 'meta_connected' || oauth === 'google_connected') {
-      const isMeta = oauth === 'meta_connected'
-      const provider = isMeta ? 'Meta Marketing API' : 'Google Ads API'
-      const scope = isMeta ? 'ads_read,business_management' : 'https://www.googleapis.com/auth/adwords'
+    if (oauth === 'meta_connected') {
+      setOauthMsg('Meta account connected. Your token is stored encrypted on the server only. No campaign was created or launched by connecting.')
+      onReload()
+    } else if (oauth === 'meta_cancelled') {
+      setOauthMsg('Meta connection cancelled. Nothing was connected and no campaign was changed.')
+    } else if (oauth === 'meta_unlinked') {
+      setError('Meta connection could not be linked to your signed-in account. Please click Connect Meta Account in the dashboard while signed in, then try again.')
+    } else if (oauth === 'google_connected') {
       supabase.from('integrations').upsert({
-        user_id: uid, provider, status: 'connected',
-        config: { readOnlyTest: true, scope, publishingEnabled: false, tokenStored: false, discardedTokenExpiresInSeconds: expiresIn ? Number(expiresIn) : null, connectedAt: new Date().toISOString() },
+        user_id: uid, provider: 'Google Ads API', status: 'connected',
+        config: { readOnlyTest: true, scope: 'https://www.googleapis.com/auth/adwords', publishingEnabled: false, tokenStored: false, connectedAt: new Date().toISOString() },
       }, { onConflict: 'user_id,provider' }).then(({ error }) => {
         if (error) setError(error.message)
-        else { setOauthMsg(`${provider} connected for a read-only test. No ads are published, and no access token was stored.`); onReload() }
+        else { setOauthMsg('Google connected for a read-only test. No ads are published, and no access token was stored.'); onReload() }
       })
     } else if (oauth === 'meta_error' || oauth === 'google_error') {
-      setError('That Meta/Google connection did not complete. Check the Vercel environment variables and the exact redirect URI in the Meta/Google console, then try Connect again. No ads were published.')
+      setError('That connection did not complete. Check the Vercel environment variables and the exact redirect URI in the Meta/Google console, then try Connect again. No ads were published.')
     }
   }, [])
   const providers = [
-    ['Meta Marketing API', 'Connect uses read-only scopes ads_read and business_management only. Publishing (ads_management) is NOT requested here and needs a separate approval step. App Review may still be required for other users.'],
     ['Google Ads API', 'Connect uses the Google Ads read-only scope only. Publishing is NOT requested here and needs a separate approval step. A developer token and API approval are still required for live use.'],
     ['Google Analytics 4', 'Enter a Measurement ID in Tracking. Verification is a later step.'],
     ['Google Tag Manager', 'Enter a Container ID in Tracking. Verification is a later step.'],
@@ -459,16 +601,185 @@ function Integrations({ integrations, uid, onReload, setError }: any) {
     await supabase.from('integrations').update({ status: 'disconnected' }).eq('provider', p).eq('user_id', uid); onReload()
   }
   return <>
-    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 text-sm text-amber-900"><strong>Nothing is published without your explicit authorization.</strong> Saving a card here only records “saved, not verified.” Connecting Meta or Google here only records a read-only test status — it does not publish ads, does not change live budgets, and no access token is stored in this step.</div>
+    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 text-sm text-amber-900"><strong>Nothing is published without your explicit authorization.</strong> Connecting Meta below does not create, launch, or change any campaign. Campaigns are created as PAUSED by default and only become ACTIVE if you explicitly confirm launch. Tokens are never shown in this browser.</div>
     {oauthMsg && <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4 text-sm text-green-900">{oauthMsg}</div>}
+    <MetaConnect uid={uid} onReload={onReload} setError={setError} />
     {providers.map(([p, note]) => <Card key={p} title={`${p} — ${statusOf(p) === 'connected' ? 'Connected (read-only test)' : statusOf(p) === 'saved_unverified' ? 'Saved, not verified' : statusOf(p) === 'disconnected' ? 'Disconnected' : 'Not connected'}`}>
       <p className="text-sm text-slate-600 mb-3">{note}</p>
-      {p === 'Meta Marketing API' && <a className={btnGhost + ' mr-2 inline-block'} href="/api/auth/meta">Connect with Meta (read-only test)</a>}
       {p === 'Google Ads API' && <a className={btnGhost + ' mr-2 inline-block'} href="/api/auth/google">Connect with Google (read-only test)</a>}
       <button className={btnGhost + ' mr-2'} onClick={() => save(p)}>Save as not verified</button>
       <button className={btnGhost} onClick={() => disconnect(p)}>Disconnect</button>
     </Card>)}
   </>
+}
+
+function MetaConnect({ uid, onReload, setError }: any) {
+  const [status, setStatus] = useState<any>(null)
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [selected, setSelected] = useState('')
+  const [campaigns, setCampaigns] = useState<any[]>([])
+  const [insights, setInsights] = useState<any[]>([])
+  const [loading, setLoading] = useState('')
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  const [datePreset, setDatePreset] = useState('last_30d')
+  const [createForm, setCreateForm] = useState({ name: '', objective: 'OUTCOME_LEADS', daily_budget: '' })
+  const [confirmLaunch, setConfirmLaunch] = useState(false)
+  const [confirmResume, setConfirmResume] = useState(false)
+  const [actionBusy, setActionBusy] = useState('')
+
+  async function authHeaders() {
+    const { data } = await supabase.auth.getSession()
+    const token = data.session?.access_token
+    if (!token) throw new Error('Please sign in first.')
+    return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+  }
+  async function loadStatus() {
+    setLoading('status'); setErr('')
+    try {
+      const headers = await authHeaders()
+      const r = await fetch('/api/meta/status', { headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not load Meta status.')
+      setStatus(j)
+      if (j.connected) await loadAccounts()
+    } catch (e: any) { setErr(e.message) } finally { setLoading('') }
+  }
+  async function loadAccounts() {
+    setLoading('accounts'); setErr('')
+    try {
+      const headers = await authHeaders()
+      const r = await fetch('/api/meta/ad-accounts', { headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not load ad accounts.')
+      setAccounts(j.accounts || [])
+      if ((j.accounts || []).length === 0) setMsg('No ad accounts found for this Meta account.')
+      else if (!selected) setSelected(j.accounts[0].id)
+    } catch (e: any) { setErr(e.message) } finally { setLoading('') }
+  }
+  async function loadCampaigns() {
+    if (!selected) { setErr('Select an ad account first.'); return }
+    setLoading('campaigns'); setErr('')
+    try {
+      const headers = await authHeaders()
+      const r = await fetch(`/api/meta/campaigns?ad_account_id=${encodeURIComponent(selected)}`, { headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not load campaigns.')
+      setCampaigns(j.campaigns || [])
+      if ((j.campaigns || []).length === 0) setMsg('No campaigns in this ad account yet.')
+    } catch (e: any) { setErr(e.message) } finally { setLoading('') }
+  }
+  async function loadInsights(campaignId = '') {
+    if (!selected) { setErr('Select an ad account first.'); return }
+    setLoading('insights'); setErr('')
+    try {
+      const headers = await authHeaders()
+      const url = `/api/meta/insights?ad_account_id=${encodeURIComponent(selected)}&date_preset=${datePreset}${campaignId ? `&campaign_id=${encodeURIComponent(campaignId)}` : ''}`
+      const r = await fetch(url, { headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not load insights.')
+      setInsights(j.insights || [])
+      if ((j.insights || []).length === 0) setMsg('No insights for this selection and date range.')
+    } catch (e: any) { setErr(e.message) } finally { setLoading('') }
+  }
+  async function connectMeta(e: React.MouseEvent) {
+    e.preventDefault(); setErr(''); setMsg('')
+    try {
+      const headers = await authHeaders()
+      const r = await fetch('/api/meta/oauth-init', { method: 'POST', headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not start Meta connection.')
+      // Plain link target, after a signed-in init step: /api/auth/meta/start
+      window.location.href = j.startUrl || '/api/auth/meta/start'
+    } catch (e: any) { setErr(e.message) }
+  }
+  async function disconnectMeta() {
+    setErr(''); setMsg('')
+    try {
+      const headers = await authHeaders()
+      const r = await fetch('/api/auth/meta/disconnect', { method: 'POST', headers })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not disconnect.')
+      setStatus(null); setAccounts([]); setCampaigns([]); setInsights([]); setSelected(''); setMsg('Meta account disconnected. The stored token was deleted.'); onReload()
+    } catch (e: any) { setErr(e.message) }
+  }
+  async function createCampaign(e: React.FormEvent) {
+    e.preventDefault(); setErr(''); setMsg(''); setActionBusy('create')
+    try {
+      if (!selected) throw new Error('Select an ad account first.')
+      if (!createForm.name.trim()) throw new Error('Campaign name is required.')
+      const headers = await authHeaders()
+      const body: any = { ad_account_id: selected, name: createForm.name.trim(), objective: createForm.objective }
+      if (createForm.daily_budget) body.daily_budget = Number(createForm.daily_budget)
+      // Explicit launch only: both the ACTIVE choice AND the checkbox are required.
+      if (confirmLaunch) { body.confirmLaunch = true; body.status = 'ACTIVE' } else { body.status = 'PAUSED' }
+      const r = await fetch('/api/meta/campaigns', { method: 'POST', headers, body: JSON.stringify(body) })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Could not create campaign.')
+      setMsg(j.note || `Campaign created (${j.status || 'PAUSED'}).`)
+      setCreateForm({ name: '', objective: 'OUTCOME_LEADS', daily_budget: '' }); setConfirmLaunch(false)
+      await loadCampaigns()
+    } catch (e: any) { setErr(e.message) } finally { setActionBusy('') }
+  }
+  async function campaignAction(campaign: any, action: 'pause' | 'resume' | 'update') {
+    setErr(''); setMsg(''); setActionBusy(`${action}-${campaign.id}`)
+    try {
+      if (action === 'resume' && !confirmResume) throw new Error('To resume, first tick the “I confirm I want to resume / activate” checkbox below.')
+      const headers = await authHeaders()
+      const body: any = { ad_account_id: selected, campaign_id: campaign.id, action }
+      if (action === 'resume') body.confirmResume = true
+      const r = await fetch('/api/meta/campaigns', { method: 'PATCH', headers, body: JSON.stringify(body) })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || 'Campaign action failed.')
+      setMsg(`Campaign ${action}d.`)
+      await loadCampaigns()
+    } catch (e: any) { setErr(e.message) } finally { setActionBusy('') }
+  }
+
+  useEffect(() => { loadStatus() }, [])
+  const statusLabel = !status ? 'Not checked yet' : status.connected ? 'Connected' : status.needsReconnect ? 'Needs reconnect — token expired or revoked' : 'Not connected'
+  return <Card title={`Meta Marketing API — ${statusLabel}`}>
+    <p className="text-sm text-slate-600 mb-3">Create &amp; manage ads and measure ad performance, with your explicit action only. Connecting does not create or launch a campaign. Campaigns are created as PAUSED unless you explicitly confirm launch. Tokens are stored encrypted on the server only and are never shown here.</p>
+    {err && <p className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-3 mb-3 text-sm">{err}</p>}
+    {msg && <p className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-3 mb-3 text-sm">{msg}</p>}
+    {loading && <p className="text-sm text-slate-600 mb-3">Loading {loading}… please wait.</p>}
+    <div className="flex gap-2 flex-wrap mb-4">
+      <a className={btnCls + ' inline-block'} href="/api/auth/meta/start" onClick={connectMeta}>Connect Meta Account</a>
+      <button className={btnGhost} onClick={loadStatus}>Refresh status</button>
+      {status?.connected && <button className={btnGhost} onClick={loadAccounts}>Load ad accounts</button>}
+      {status?.connected && <button className={btnGhost} onClick={disconnectMeta}>Disconnect Meta</button>}
+    </div>
+    {status && <p className="text-sm text-slate-700 mb-3">Status: {statusLabel}{status.metaUserId ? ` • Meta user: ${status.metaUserId}` : ''}{status.tokenExpiresAt ? ` • Token expires: ${new Date(status.tokenExpiresAt).toLocaleDateString()}` : ''}{status.scopes ? ` • Scopes: ${status.scopes}` : ''}</p>}
+    {accounts.length > 0 && <div className="mb-4">
+      <Field label="Ad account"><select className={inputCls} value={selected} onChange={e => setSelected(e.target.value)}>{accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name} ({a.id}) — {a.account_status}</option>)}</select></Field>
+      <div className="flex gap-2 flex-wrap">
+        <button className={btnCls} onClick={loadCampaigns}>Load campaigns</button>
+        <button className={btnGhost} onClick={() => loadInsights()}>Load account insights</button>
+        <Field label="Date range"><select className={inputCls} value={datePreset} onChange={e => setDatePreset(e.target.value)}><option value="last_7d">Last 7 days</option><option value="last_30d">Last 30 days</option><option value="last_90d">Last 90 days</option></select></Field>
+      </div>
+    </div>}
+    {accounts.length === 0 && status?.connected && <Empty text="No ad accounts found yet. Click Load ad accounts, or check that this Meta user has access to a Business Manager ad account." />}
+    {campaigns.length > 0 && <div className="mb-4 overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className="text-left">Campaign</th><th>Objective</th><th>Status</th><th></th></tr></thead><tbody>
+      {campaigns.map((c: any) => <tr key={c.id} className="border-t"><td>{c.name}<div className="text-xs text-slate-500">{c.id}</div></td><td>{c.objective}</td><td>{c.effective_status || c.status}</td><td className="space-x-2">
+        <button className={btnGhost} disabled={actionBusy === `pause-${c.id}`} onClick={() => campaignAction(c, 'pause')}>Pause</button>
+        <button className={btnGhost} disabled={actionBusy === `resume-${c.id}`} onClick={() => campaignAction(c, 'resume')}>Resume</button>
+        <button className={btnGhost} onClick={() => loadInsights(c.id)}>Insights</button>
+      </td></tr>)}
+    </tbody></table></div>}
+    {campaigns.length === 0 && selected && <Empty text="No campaigns loaded yet. Click Load campaigns above." />}
+    <label className="flex items-center gap-2 text-sm mb-4"><input type="checkbox" checked={confirmResume} onChange={e => setConfirmResume(e.target.checked)} /> I confirm I want to resume / activate a campaign (required before Resume works).</label>
+    {selected && <form onSubmit={createCampaign} className="border rounded-lg p-3 mb-4">
+      <h3 className="font-bold mb-2">Create a campaign — PAUSED by default</h3>
+      <Field label="Campaign name"><input className={inputCls} value={createForm.name} onChange={e => setCreateForm({ ...createForm, name: e.target.value })} required /></Field>
+      <Field label="Objective"><select className={inputCls} value={createForm.objective} onChange={e => setCreateForm({ ...createForm, objective: e.target.value })}><option value="OUTCOME_LEADS">Leads</option><option value="OUTCOME_SALES">Sales</option><option value="OUTCOME_TRAFFIC">Traffic</option><option value="OUTCOME_AWARENESS">Awareness</option><option value="OUTCOME_ENGAGEMENT">Engagement</option><option value="OUTCOME_APP_PROMOTION">App promotion</option></select></Field>
+      <Field label="Daily budget (optional, in account currency minor units as Meta expects)"><input className={inputCls} value={createForm.daily_budget} onChange={e => setCreateForm({ ...createForm, daily_budget: e.target.value })} placeholder="e.g. 1000" /></Field>
+      <label className="flex items-center gap-2 text-sm mb-3"><input type="checkbox" checked={confirmLaunch} onChange={e => setConfirmLaunch(e.target.checked)} /> I confirm I want to launch this campaign as ACTIVE right now. If unticked, it is created as PAUSED and will not spend.</label>
+      <button className={btnCls} disabled={!!actionBusy}>{actionBusy === 'create' ? 'Creating…' : 'Create campaign'}</button>
+    </form>}
+    {insights.length > 0 && <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr><th className="text-left">Impressions</th><th>Clicks</th><th>Spend</th><th>Reach</th><th>CTR</th><th>CPC</th><th>CPM</th></tr></thead><tbody>
+      {insights.map((row: any, i: number) => <tr key={i} className="border-t"><td>{row.impressions ?? '—'}</td><td>{row.clicks ?? '—'}</td><td>{row.spend ?? '—'}</td><td>{row.reach ?? '—'}</td><td>{row.ctr ?? '—'}</td><td>{row.cpc ?? '—'}</td><td>{row.cpm ?? '—'}</td></tr>)}
+    </tbody></table></div>}
+  </Card>
 }
 
 function Plans({ profile, uid, onReload, setError }: any) {
