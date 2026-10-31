@@ -1,6 +1,6 @@
 // GET /api/meta/status — connection status only. Never returns a token.
-import { verifySupabaseUser } from '../_lib/auth'
-import { getMetaConnection, getServiceClient } from '../_lib/supabase-server'
+import { verifySupabaseUser } from '../_lib/auth.js'
+import { getMetaConnection, getServiceClient } from '../_lib/supabase-server.js'
 
 export const config = { runtime: 'nodejs' }
 

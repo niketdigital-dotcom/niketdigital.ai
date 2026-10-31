@@ -8,9 +8,9 @@
 // explicitly contains confirmLaunch:true AND status:'ACTIVE'.
 // Resume: requires confirmResume:true in the body.
 // Update: only name, daily_budget, lifetime_budget are accepted.
-import { verifySupabaseUser, getQuery, readJsonBody } from '../_lib/auth'
-import { getDecryptedMetaToken, setIntegrationStatus } from '../_lib/supabase-server'
-import { metaFetch, assertAccountOwned, normalizeAccountId, MetaApiError } from '../_lib/meta'
+import { verifySupabaseUser, getQuery, readJsonBody } from '../_lib/auth.js'
+import { getDecryptedMetaToken, setIntegrationStatus } from '../_lib/supabase-server.js'
+import { metaFetch, assertAccountOwned, normalizeAccountId, MetaApiError } from '../_lib/meta.js'
 
 export const config = { runtime: 'nodejs' }
 

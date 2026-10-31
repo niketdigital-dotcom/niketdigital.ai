@@ -16,10 +16,10 @@
 //     status='connected', config without any token).
 // Redirects back to the app with only a flag: ?oauth=meta_connected,
 // ?oauth=meta_cancelled, ?oauth=meta_unlinked, or ?oauth=meta_error.
-import { getQuery } from '../../_lib/auth'
-import { getServiceClient, setMetaConnection, setIntegrationStatus } from '../../_lib/supabase-server'
-import { hashState, encryptToken, ConfigError } from '../../_lib/crypto'
-import { graphBase, graphVersion } from '../../_lib/meta'
+import { getQuery } from '../../_lib/auth.js'
+import { getServiceClient, setMetaConnection, setIntegrationStatus } from '../../_lib/supabase-server.js'
+import { hashState, encryptToken, ConfigError } from '../../_lib/crypto.js'
+import { graphBase, graphVersion } from '../../_lib/meta.js'
 
 export const config = { runtime: 'nodejs' }
 

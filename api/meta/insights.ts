@@ -6,9 +6,9 @@
 // auto-refreshed silently: a long-lived token (60 days) is stored at
 // connect time, and when it expires the user must reconnect explicitly.
 // Rate limits return 429 with retryAfterSeconds when Meta provides it.
-import { verifySupabaseUser, getQuery } from '../_lib/auth'
-import { getDecryptedMetaToken, setIntegrationStatus } from '../_lib/supabase-server'
-import { metaFetch, assertAccountOwned, normalizeAccountId, MetaApiError } from '../_lib/meta'
+import { verifySupabaseUser, getQuery } from '../_lib/auth.js'
+import { getDecryptedMetaToken, setIntegrationStatus } from '../_lib/supabase-server.js'
+import { metaFetch, assertAccountOwned, normalizeAccountId, MetaApiError } from '../_lib/meta.js'
 
 export const config = { runtime: 'nodejs' }
 

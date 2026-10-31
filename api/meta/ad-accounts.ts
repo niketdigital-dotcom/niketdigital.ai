@@ -1,9 +1,9 @@
 // GET /api/meta/ad-accounts — ad accounts the connected Meta user can access.
 // Auth-checked. Never returns a token. On expired/revoked token (190),
 // marks integrations needs_reconnect and returns needsReconnect:true.
-import { verifySupabaseUser } from '../_lib/auth'
-import { getDecryptedMetaToken, setIntegrationStatus } from '../_lib/supabase-server'
-import { fetchUserAdAccounts, MetaApiError } from '../_lib/meta'
+import { verifySupabaseUser } from '../_lib/auth.js'
+import { getDecryptedMetaToken, setIntegrationStatus } from '../_lib/supabase-server.js'
+import { fetchUserAdAccounts, MetaApiError } from '../_lib/meta.js'
 
 export const config = { runtime: 'nodejs' }
 

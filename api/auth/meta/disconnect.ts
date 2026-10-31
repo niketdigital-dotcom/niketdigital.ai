@@ -3,8 +3,8 @@
 // It does not revoke the token at Meta (a separate Graph call could do
 // that, but deleting locally is the safe, explicit disconnect step);
 // the user can also revoke access in Facebook Settings > Business Integrations.
-import { verifySupabaseUser } from '../../_lib/auth'
-import { deleteMetaConnection, setIntegrationStatus } from '../../_lib/supabase-server'
+import { verifySupabaseUser } from '../../_lib/auth.js'
+import { deleteMetaConnection, setIntegrationStatus } from '../../_lib/supabase-server.js'
 
 export const config = { runtime: 'nodejs' }
 

@@ -7,9 +7,9 @@
 // state record, and redirects to Meta. No user_id is ever trusted from
 // the browser, and no token is returned to the browser.
 import { randomBytes } from 'node:crypto'
-import { verifySupabaseUser, readJsonBody } from '../_lib/auth'
-import { getServiceClient } from '../_lib/supabase-server'
-import { hashState } from '../_lib/crypto'
+import { verifySupabaseUser, readJsonBody } from '../_lib/auth.js'
+import { getServiceClient } from '../_lib/supabase-server.js'
+import { hashState } from '../_lib/crypto.js'
 
 export const config = { runtime: 'nodejs' }
 

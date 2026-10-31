@@ -11,9 +11,9 @@
 // frontend first called /api/meta/oauth-init) and also in a short-lived
 // HttpOnly Secure SameSite=Lax cookie. The callback checks both.
 import { randomBytes } from 'node:crypto'
-import { getServiceClient } from '../../_lib/supabase-server'
-import { hashState } from '../../_lib/crypto'
-import { graphVersion } from '../../_lib/meta'
+import { getServiceClient } from '../../_lib/supabase-server.js'
+import { hashState } from '../../_lib/crypto.js'
+import { graphVersion } from '../../_lib/meta.js'
 
 export const config = { runtime: 'nodejs' }
 

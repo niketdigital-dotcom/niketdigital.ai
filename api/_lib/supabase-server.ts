@@ -7,7 +7,7 @@
 // Tokens are stored only in public.meta_connections, encrypted
 // (see api/_lib/crypto.ts). They are never stored in integrations.config.
 import { createClient } from '@supabase/supabase-js'
-import { decryptToken } from './crypto'
+import { decryptToken } from './crypto.js'
 
 export class ServerConfigError extends Error {}
 
